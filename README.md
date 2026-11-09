@@ -16,7 +16,7 @@ Conversations / Pidgin -> telepathy-haze -> libsignal-purple.so (this repo) -> u
   login ends with an error after 120 s.
 
 Not yet: groups, attachments, typing and read notifications, new contacts by number. The safety guard `--allow` of the bridge
-decides who may receive messages from the phone (the project owner's own account is used for tests).
+decides who may receive messages from the phone.
 
 ## Package
 `make debs APP=libsignal-purple` in the N900 project builds the .deb. It installs the plugin into `/opt/libsignal-purple/lib`
