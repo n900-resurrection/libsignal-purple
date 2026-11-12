@@ -58,6 +58,7 @@ typedef struct {
     guint64 last_ts;
     guint64 since_snapshot;  /* last_ts when the history was requested */
     int hist_pending;        /* HISTORY answers still to come */
+    gboolean names_only;     /* the CONTACTS answer in progress only refreshes the names: no history requests */
 } Sig;
 
 static guint64 now_ms(void)
@@ -151,7 +152,13 @@ static void add_contact(Sig *s, const char *uuid, const char *name, const char *
 {
     PurpleBuddy *b = purple_find_buddy(s->account, uuid);
     const char *alias = (name && *name) ? name : (phone && *phone ? phone : NULL);
-    char *self_alias = NULL;
+    char *self_alias = NULL, *short_alias = NULL;
+
+    if (!alias) {
+        /* neither a name nor a number is known (yet): a short label instead of the whole UUID */
+        short_alias = g_strdup_printf("Signal %.8s", uuid);
+        alias = short_alias;
+    }
 
     if (!g_hash_table_lookup_extended(s->contacts, uuid, NULL, NULL))
         g_hash_table_insert(s->contacts, g_strdup(uuid), NULL);
@@ -167,6 +174,7 @@ static void add_contact(Sig *s, const char *uuid, const char *name, const char *
     }
     purple_prpl_got_user_status(s->account, uuid, "available", NULL);
     g_free(self_alias);
+    g_free(short_alias);
 }
 
 static void show_message(Sig *s, const char *uuid, guint64 ts, const char *text, gboolean outgoing)
@@ -205,6 +213,10 @@ static void handle_line(Sig *s, char **f, int n)
     } else if (!strcmp(cmd, "CONTACT") && n >= 3) {
         add_contact(s, f[1], f[2], n >= 4 ? f[3] : NULL);
     } else if (!strcmp(cmd, "CONTACTS-END")) {
+        if (s->names_only) {
+            s->names_only = FALSE;
+            return;
+        }
         /* messages that arrived while we were not connected */
         GHashTableIter it;
         gpointer k;
@@ -222,7 +234,17 @@ static void handle_line(Sig *s, char **f, int n)
             return;            /* our own message, sent through the bridge: already in the window */
         if (s->hist_pending > 0 && ts <= s->since_snapshot)
             return;            /* already shown in an earlier session */
+        if (!g_hash_table_lookup_extended(s->contacts, f[1], NULL, NULL)) {
+            /* a sender we have no contact for: a buddy with a short label now, the name when the bridge knows it */
+            add_contact(s, f[1], NULL, NULL);
+            s->names_only = TRUE;
+            send_fields(s, "CONTACTS", NULL);
+        }
         show_message(s, f[1], ts, f[3], FALSE);
+    } else if (!strcmp(cmd, "CONTACTS-CHANGED")) {
+        /* names or contacts changed (synchronisation, profiles fetched): read the list again, without the history */
+        s->names_only = TRUE;
+        send_fields(s, "CONTACTS", NULL);
     } else if (!strcmp(cmd, "SENT") && n >= 4) {
         guint64 ts = g_ascii_strtoull(f[2], NULL, 10);
         if (s->hist_pending > 0 && ts <= s->since_snapshot)
@@ -243,7 +265,7 @@ static void handle_line(Sig *s, char **f, int n)
         if (s->hist_pending > 0)
             s->hist_pending--;
     }
-    /* GMSG, GSENT, GROUP, CONTACTS-CHANGED, PONG: not used yet */
+    /* GMSG, GSENT, GROUP, PONG: not used yet */
 }
 
 static void parse_buffer(Sig *s)
